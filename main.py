@@ -150,23 +150,22 @@ def search_faiss(index, query_vecs, top_k):
 
 def rerank_with_flan_t5(query, texts):
     prompt = f"""You are given a query: \"{query}\"\n\nAmong the following texts, which is the most relevant to the query? Rank them from most to least relevant and explain briefly why.\n\nTexts:\n""" + "\n\n".join([f"{i+1}. {t}" for i, t in enumerate(texts)])
+    print(prompt)
     inputs = gen_tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1024).to(dev)
     with torch.no_grad():
         outputs = gen_model.generate(inputs["input_ids"], max_length=256)
     return gen_tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 def parse_rerank_indices(flan_output, original_count):
-    # Find all occurrences of "<number>. " at the start or inside lines
-    matches = re.findall(r"\b(\d+)\.", flan_output)
-    seen = set()
-    indices = []
-    for m in matches:
-        idx = int(m) - 1
-        if 0 <= idx < original_count and idx not in seen:
-            indices.append(idx)
-            seen.add(idx)
-
-    return indices if indices else list(range(original_count))
+    lines = flan_output.strip().split("\n")
+    rank_map = []
+    for line in lines:
+        match = re.match(r"(\d+)\.\s", line.strip())
+        if match:
+            num = int(match.group(1)) - 1
+            if 0 <= num < original_count:
+                rank_map.append(num)
+    return rank_map if rank_map else list(range(original_count))
 
 # ---------------------- Main Pipeline ----------------------
 def main():
@@ -232,16 +231,17 @@ def main():
     top_header_texts = [meta_headers[idx]["text"] for idx in matched_header_indices]
     reranked_result = rerank_with_flan_t5(query, top_header_texts)
     reranked_order = parse_rerank_indices(reranked_result, len(top_header_texts))
+    print(reranked_result)
 
     section_analysis = []
-    for new_rank, rel_idx in enumerate(reranked_order[:6], 1):
+    for new_rank, rel_idx in enumerate(reranked_order, 1):
         actual_idx = matched_header_indices[rel_idx]
         info = meta_headers[actual_idx]
         section_analysis.append({
             "document": info["document"],
-            "section_title": info["text"],
-            "importance_rank": new_rank,
-            "page_number": info["page"] + 1
+            "refined_text": info["text"],
+            "page_number": info["page"] + 1,
+            "importance_rank": new_rank
         })
 
     summaries = batch_summarize(bodies)
@@ -254,7 +254,7 @@ def main():
     reranked_body_order = parse_rerank_indices(reranked_body, len(top_body_texts))
 
     subsection_analysis = []
-    for rel_idx in reranked_body_order[:6]:
+    for rel_idx in reranked_body_order:
         actual_idx = matched_indices[rel_idx]
         info = meta_bodies[actual_idx]
         subsection_analysis.append({
@@ -262,6 +262,14 @@ def main():
             "refined_text": info["text"],
             "page_number": info["page"] + 1
         })
+
+    generated_summary = ""
+    if subsection_analysis:
+        joined_bodies = "\n".join([x["refined_text"] for x in subsection_analysis])
+        prompt = f"Summarize the following content for a '{persona}' doing '{job}':\n{joined_bodies}"
+        inputs = gen_tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512).to(dev)
+        summary_ids = gen_model.generate(inputs["input_ids"], max_length=256)
+        generated_summary = gen_tokenizer.decode(summary_ids[0], skip_special_tokens=True)
 
     output = {
         "metadata": {
@@ -272,6 +280,7 @@ def main():
         },
         "section_analysis": section_analysis,
         "subsection_analysis": subsection_analysis,
+        "generated_summary": generated_summary
     }
 
     os.makedirs(os.path.dirname(OUTPUT_FILE), exist_ok=True)

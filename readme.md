@@ -171,10 +171,12 @@ docker build --platform linux/amd64 -t mysolutionname:somerandomidentifier .
 ```
 
 ### Run the Docker Container
-```bash
-docker run --rm -v $(pwd)/PDFs:/app/PDFs -v $(pwd)/output:/app/output --network none mysolutionname:somerandomidentifier
+Internet is required to download the model flang from hugging face. If it is stored on first download then it can run without internet 
 
+```bash
+docker run --rm -v $(pwd)/PDFs:/app/PDFs -v $(pwd)/output:/app/output mysolutionname:somerandomidentifier
 ```
+
 
 ## Potential Improvements
 

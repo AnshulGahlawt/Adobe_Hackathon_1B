@@ -44,16 +44,31 @@ This allowed our system to infer heading types (H1, H2, H3, Body) during inferen
 
 ---
 
-### 3. Semantic Ranking with Persona and Task Context
+### 3. Semantic Retrieval & Reranking
 
-At inference time:
-- The **persona** and **job-to-be-done** input were combined into a semantic query.
-- We embedded both the query and all heading/body blocks using `all-MiniLM-L6-v2`.
-- Using **FAISS** vector indexing, we performed nearest-neighbor searches to identify:
-  - Most relevant sections (headings)
-  - Most relevant body paragraphs (sub-sections)
+After classification into headings and bodies, we perform a **RAG-style** retrieval pipeline:
 
-Sections were scored based on cosine similarity and ranked accordingly.
+1. **Query Generation**  
+   - Compose a single prompt:  
+     ```
+     Generate 5 diverse paraphrased versions of: "<Persona> wants to <Job>"
+     ```
+   - Model: `google/flan-t5-small` (via HuggingFace Transformers)  
+2. **Embedding & Faiss Indexing**  
+   - Embed both the paraphrased queries and candidate text blocks (headings or long body paragraphs) with the same Sentence-Transformer  
+   - Build FAISS L2 indexes for headings and for bodies  
+3. **Nearest-Neighbor Search & Rerank**  
+   - Retrieve top K candidates for headings and bodies separately  
+   - Rerank with FLAN-T5 by prompting:  
+     ```
+     Among the following texts, rank them from most to least relevant to "<Persona> wants to <Job>" and explain.
+     ```
+   - Parse the ranked list to produce final `importance_rank`  
+
+### 4. Summarization of Body Text (New)
+
+- If any sub-sections remain after reranking, their raw text is batched (size 8) and summarized with the same `google/flan-t5-small` model (max 50 new tokens each).  
+- These concise summaries are included under `"generated_summary"` in the final JSON.
 
 ---
 
@@ -69,7 +84,7 @@ The final output (`result.json`) included:
 
 ## Input Format
 
-Place the following in the `input/` folder:
+Place the following in the `Pdf/` folder:
 
 - 3 to 10 PDFs
 - A JSON file named `challenge1b_input.json`:
@@ -129,44 +144,44 @@ The result will be saved as `output/result.json` and should follow this structur
 }
 ```
 
-## Libraries & Models Used
+## Libraries & Models (updated)
 
-### Python Libraries
+| Library / Package                 | Purpose                                                        |
+|-----------------------------------|----------------------------------------------------------------|
+| `PyMuPDF (fitz)`                  | PDF parsing & layout feature extraction                        |
+| `sentence-transformers`           | Embedding model for text blocks (`multi-qa-distilbert-cos-v1`) |
+| `transformers`                    | FLAN-T5 model for paraphrasing, reranking, and summarization   |
+| `faiss`                           | Fast vector similarity search                                  |
+| `torch`                           | Inference backend for FLAN-T5                                  |
+| `tqdm`                            | Progress bars                                                  |
+| `joblib`                          | Model & encoder persistence                                    |
+| `numpy`, `json`, `os`, `re`       | Core utilities                                                 |
+| `datetime`                        | Timestamp generation                                           |
+| `warnings`                        | Suppressing benign warnings                                    |
 
-| Library                  | Purpose                                           |
-|--------------------------|---------------------------------------------------|
-| `PyMuPDF (fitz)`         | PDF parsing and layout reconstruction             |
-| `sentence-transformers`  | Semantic embedding of text                        |
-| `faiss`                  | Fast vector similarity search for ranking         |
-| `scikit-learn`           | Classification, encoders, scalers                 |
-| `xgboost`                | Gradient boosting classifier (for evaluation)     |
-| `lightgbm`               | Lightweight boosting model (for evaluation)       |
-| `numpy`, `pandas`        | Data handling and numerical operations            |
-| `joblib`                 | Model saving/loading                              |
-| `json`, `os`, `re`, `datetime` | Standard libraries for file I/O, processing |
-
-### Models Used
-
-| Model Name                    | Purpose                                            | Final Use |
-|------------------------------|----------------------------------------------------|-----------|
-| `multi-qa-distilbert-cos-v1` | Embedding model used during training               | Yes       |
-| `all-MiniLM-L6-v2`           | Embedding model used at inference time             | Yes       |
-| `MLPClassifier`              | Final heading classifier (via RandomizedSearchCV)  | Yes       |
-| `XGBoost`                    | Evaluated during training, not used finally        | No        |
-| `LightGBM`                   | Evaluated during training, not used finally        | No        |
+**Models loaded at runtime**:
+- **Sentence-Transformer**: `multi-qa-distilbert-cos-v1`
+- **Summarization/Reranking**: `google/flan-t5-small`
+- **Heading Classifier**: `best_model.pkl`
+- **Pre-fit Encoders/Scalers**: `font_encoder.pkl`, `layout_scaler.pkl`, `label_encoder.pkl`, `sentence_transformer.pkl`
 
 ---
 
 ## Execution Instructions
 
-Follow the steps below to build and run the solution using Docker:
+###  Build the Docker Image
 
-### 1. Build the Docker Image
-
-Ensure you're in the root directory of the project (where the Dockerfile is located), then run:
+Make sure you're in the root directory of the project, then run:
 
 ```bash
-docker build --platform linux/amd64 -t adobe1b:submission .
+docker build --platform linux/amd64 -t mysolutionname:somerandomidentifier .
+
+```
+
+### Run the Docker Container
+```bash
+docker run --rm -v $(pwd)/PDFs:/app/PDFs -v $(pwd)/output:/app/output --network none mysolutionname:somerandomidentifier
+
 ```
 
 ## Potential Improvements

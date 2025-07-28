@@ -72,14 +72,6 @@ After classification into headings and bodies, we perform a **RAG-style** retrie
 
 ---
 
-### 4. Output Generation
-
-The final output (`result.json`) included:
-- Metadata: documents, persona, job, timestamp
-- Ranked list of extracted sections (document, title, page number, importance)
-- Subsection analysis (document, refined paragraph, page number)
-
----
 
 
 ## Input Format
